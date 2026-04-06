@@ -10,15 +10,18 @@ app.use(express.json());
 
 /** ---------- CONFIG ---------- **/
 const PORT = Number(process.env.PORT || 3000);
+const SESSION_TIMEOUT_SECONDS = 86400; // 24 saat
 
 const MUTLUCELL_URL = process.env.MUTLUCELL_URL || "https://smsgw.mutlucell.com/smsgw-ws/sndblkex";
 const MUTLUCELL_KA = process.env.MUTLUCELL_KA;
 const MUTLUCELL_PWD = process.env.MUTLUCELL_PWD;
 const MUTLUCELL_ORG = "NETNUCLEUS";
-const MUTLUCELL_CHARSET = process.env.MUTLUCELL_CHARSET || "turkish"; // turkish | unicode vs
+const MUTLUCELL_CHARSET = process.env.MUTLUCELL_CHARSET || "turkish";
+
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "olives-admin-2024";
 
 if (!MUTLUCELL_KA || !MUTLUCELL_PWD) {
-  console.error("❌ MUTLUCELL_KA veya MUTLUCELL_PWD eksik. /opt/otp-api/.env kontrol et.");
+  console.error("MUTLUCELL_KA veya MUTLUCELL_PWD eksik. /opt/otp-api/.env kontrol et.");
 }
 
 /** ---------- POSTGRES ---------- **/
@@ -29,6 +32,41 @@ const pool = new Pool({
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE || "wifidb",
 });
+
+/** ---------- DB MIGRATION ---------- **/
+async function initDb() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mac_auth (
+        id SERIAL PRIMARY KEY,
+        mac VARCHAR(50) NOT NULL,
+        phone VARCHAR(20) NOT NULL,
+        first_name VARCHAR(100),
+        last_name VARCHAR(100),
+        authenticated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mac_auth_mac ON mac_auth(mac)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mac_auth_time ON mac_auth(authenticated_at)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS connection_logs (
+        id SERIAL PRIMARY KEY,
+        phone VARCHAR(20),
+        first_name VARCHAR(100),
+        last_name VARCHAR(100),
+        mac VARCHAR(50),
+        ip VARCHAR(50),
+        action VARCHAR(20) DEFAULT 'login',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    console.log("DB migration OK");
+  } catch (err) {
+    console.error("DB migration error:", err.message);
+  }
+}
 
 /** ---------- HELPERS ---------- **/
 function generateOtp() {
@@ -44,32 +82,56 @@ function escapeXml(str = "") {
     .replace(/'/g, "&apos;");
 }
 
-/**
- * TR normalize:
- * - "5xx..."  -> "90xxxxxxxxxx"
- * - "0(5xx)"  -> "90xxxxxxxxxx"
- * - "+90..."  -> "90..."
- * - boşluk, parantez, tire temizlenir
- */
 function normalizeTrPhone(raw) {
   let p = String(raw || "").trim();
-  p = p.replace(/[^\d+]/g, ""); // sadece digit + kalsın
+  p = p.replace(/[^\d+]/g, "");
   if (p.startsWith("+")) p = p.slice(1);
   if (p.startsWith("0")) p = p.slice(1);
   if (p.startsWith("90")) return p;
   if (p.startsWith("5") && p.length === 10) return "90" + p;
-  return p; // ne geldiyse (en azından bozmuyoruz)
+  return p;
 }
 
-/**
- * İsim/soyisim temizleme
- */
 function sanitizeName(name) {
   if (!name) return null;
   return String(name)
     .trim()
-    .replace(/[<>'"&]/g, "") // Basit XSS koruması
-    .slice(0, 100); // Max 100 karakter
+    .replace(/[<>'"&]/g, "")
+    .slice(0, 100);
+}
+
+function normalizeMac(mac) {
+  if (!mac) return null;
+  const cleaned = String(mac).trim().toUpperCase();
+  if (cleaned === "$(MAC)" || cleaned.length < 6) return null;
+  return cleaned;
+}
+
+function requireAdmin(req, res, next) {
+  const token = req.headers["x-admin-token"] || req.query.token;
+  if (token !== ADMIN_TOKEN) {
+    return res.status(401).json({ ok: false, error: "Yetkisiz" });
+  }
+  next();
+}
+
+async function setRadiusCredentials(username, password) {
+  await pool.query(`DELETE FROM radcheck WHERE username = $1`, [username]);
+  await pool.query(
+    `INSERT INTO radcheck (username, attribute, op, value)
+     VALUES ($1, 'Cleartext-Password', ':=', $2)`,
+    [username, password]
+  );
+
+  await pool.query(
+    `DELETE FROM radreply WHERE username = $1 AND attribute = 'Session-Timeout'`,
+    [username]
+  );
+  await pool.query(
+    `INSERT INTO radreply (username, attribute, op, value)
+     VALUES ($1, 'Session-Timeout', ':=', $2)`,
+    [username, String(SESSION_TIMEOUT_SECONDS)]
+  );
 }
 
 async function sendSmsMutlucell({ toPhone, text }) {
@@ -90,7 +152,6 @@ async function sendSmsMutlucell({ toPhone, text }) {
     validateStatus: () => true,
   });
 
-  // Mutlucell çoğu zaman text/plain / xml döner. Biz loglayalım:
   return {
     status: resp.status,
     body: typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data),
@@ -100,12 +161,50 @@ async function sendSmsMutlucell({ toPhone, text }) {
 /** ---------- BASIC HEALTH ---------- **/
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+/** ---------- MAC CHECK (auto-login) ---------- **/
+app.post("/otp/check-mac", async (req, res) => {
+  try {
+    const mac = normalizeMac(req.body.mac);
+    if (!mac) {
+      return res.json({ ok: false });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT phone, first_name, last_name FROM mac_auth
+       WHERE mac = $1 AND authenticated_at > NOW() - INTERVAL '24 hours'
+       ORDER BY authenticated_at DESC LIMIT 1`,
+      [mac]
+    );
+
+    if (rows.length === 0) {
+      return res.json({ ok: false });
+    }
+
+    const { phone, first_name, last_name } = rows[0];
+    const username = phone;
+    const password = generateOtp();
+
+    await setRadiusCredentials(username, password);
+
+    await pool.query(
+      `INSERT INTO connection_logs (phone, first_name, last_name, mac, action)
+       VALUES ($1, $2, $3, $4, 'auto-login')`,
+      [phone, first_name, last_name, mac]
+    );
+
+    console.log("[AUTO-LOGIN]", phone, first_name, last_name, mac);
+    return res.json({ ok: true, username, password, firstName: first_name, lastName: last_name });
+  } catch (err) {
+    console.error("check-mac error:", err?.message || err);
+    return res.json({ ok: false });
+  }
+});
+
 /** ---------- OTP REQUEST ---------- **/
 app.post("/otp/request", async (req, res) => {
   try {
     const { phone, firstName, lastName, kvkkAccepted, mac, ip } = req.body;
 
-    // Validasyonlar
     if (!phone) {
       return res.status(400).json({ ok: false, error: "Telefon numarası gerekli" });
     }
@@ -130,7 +229,6 @@ app.post("/otp/request", async (req, res) => {
     const sanitizedFirstName = sanitizeName(firstName);
     const sanitizedLastName = sanitizeName(lastName);
 
-    // basit rate limit: aynı telefona 60 sn içinde tekrar yollama
     const rl = await pool.query(
       `SELECT id FROM otp_requests
        WHERE phone = $1 AND created_at > NOW() - INTERVAL '60 seconds'
@@ -150,14 +248,11 @@ app.post("/otp/request", async (req, res) => {
       [normalized, code, sanitizedFirstName, sanitizedLastName, true, mac || null, ip || null]
     );
 
-    // SMS content
-    const smsText = `Olives Coffee WiFi kodun: ${code}\n5 dk geçerli.`;
+    const smsText = `Merhaba ${sanitizedFirstName}, Olives Coffee WiFi kodun: ${code}\n5 dk gecerli.`;
 
-    // Mutlucell gönder
     const smsResp = await sendSmsMutlucell({ toPhone: normalized, text: smsText });
-    console.log("[SMS]", normalized, smsResp.status, smsResp.body);
+    console.log("[SMS]", normalized, sanitizedFirstName, sanitizedLastName, smsResp.status, smsResp.body);
 
-    // İstersen response'u DB'ye de yazabiliriz ama şimdilik log yeter
     if (smsResp.status >= 400) {
       return res.status(500).json({ ok: false, error: "SMS gönderilemedi" });
     }
@@ -172,7 +267,7 @@ app.post("/otp/request", async (req, res) => {
 /** ---------- OTP VERIFY ---------- **/
 app.post("/otp/verify", async (req, res) => {
   try {
-    const { phone, code } = req.body;
+    const { phone, code, mac, ip } = req.body;
     if (!phone || !code) return res.status(400).json({ ok: false, error: "Telefon ve kod gerekli" });
 
     const normalized = normalizeTrPhone(phone);
@@ -196,27 +291,11 @@ app.post("/otp/verify", async (req, res) => {
 
     await pool.query(`UPDATE otp_requests SET used = true WHERE id = $1`, [otpId]);
 
-    // RADIUS: username=phone, password=tek seferlik üretelim
     const username = normalized;
     const password = generateOtp();
 
-    await pool.query(`DELETE FROM radcheck WHERE username = $1`, [username]);
+    await setRadiusCredentials(username, password);
 
-    await pool.query(
-      `INSERT INTO radcheck (username, attribute, op, value)
-       VALUES ($1, 'Cleartext-Password', ':=', $2)`,
-      [username, password]
-    );
-
-    // 1 saat net limit (Mikrotik Session-Timeout)
-    await pool.query(`DELETE FROM radreply WHERE username = $1 AND attribute = 'Session-Timeout'`, [username]);
-    await pool.query(
-      `INSERT INTO radreply (username, attribute, op, value)
-       VALUES ($1, 'Session-Timeout', ':=', '3600')`,
-      [username]
-    );
-
-    // Kullanıcı bilgilerini wifi_users tablosuna kaydet/güncelle
     await pool.query(
       `INSERT INTO wifi_users (phone, first_name, last_name, kvkk_accepted_at, last_login, login_count)
        VALUES ($1, $2, $3, NOW(), NOW(), 1)
@@ -228,6 +307,27 @@ app.post("/otp/verify", async (req, res) => {
       [normalized, otpRecord.first_name, otpRecord.last_name]
     );
 
+    const normalizedMac = normalizeMac(mac);
+    if (normalizedMac) {
+      await pool.query(
+        `DELETE FROM mac_auth WHERE mac = $1`,
+        [normalizedMac]
+      );
+      await pool.query(
+        `INSERT INTO mac_auth (mac, phone, first_name, last_name, authenticated_at)
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [normalizedMac, normalized, otpRecord.first_name, otpRecord.last_name]
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO connection_logs (phone, first_name, last_name, mac, ip, action)
+       VALUES ($1, $2, $3, $4, $5, 'otp-login')`,
+      [normalized, otpRecord.first_name, otpRecord.last_name, normalizedMac, ip || null]
+    );
+
+    console.log("[LOGIN]", normalized, otpRecord.first_name, otpRecord.last_name, normalizedMac);
+
     return res.json({ ok: true, username, password });
   } catch (err) {
     console.error("otp/verify error:", err?.message || err, err?.response?.data || "");
@@ -235,7 +335,86 @@ app.post("/otp/verify", async (req, res) => {
   }
 });
 
+/** ---------- ADMIN: Kullanıcı listesi ---------- **/
+app.get("/admin/users", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT phone, first_name, last_name, last_login, login_count, kvkk_accepted_at
+       FROM wifi_users
+       ORDER BY last_login DESC
+       LIMIT 500`
+    );
+    return res.json({ ok: true, users: rows });
+  } catch (err) {
+    console.error("admin/users error:", err?.message || err);
+    return res.status(500).json({ ok: false, error: "Sunucu hatası" });
+  }
+});
+
+/** ---------- ADMIN: Bağlantı logları ---------- **/
+app.get("/admin/logs", requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const phone = req.query.phone ? normalizeTrPhone(req.query.phone) : null;
+
+    let query = `
+      SELECT phone, first_name, last_name, mac, ip, action, created_at
+      FROM connection_logs
+    `;
+    const params = [];
+
+    if (phone) {
+      query += ` WHERE phone = $1`;
+      params.push(phone);
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const { rows } = await pool.query(query, params);
+    return res.json({ ok: true, logs: rows });
+  } catch (err) {
+    console.error("admin/logs error:", err?.message || err);
+    return res.status(500).json({ ok: false, error: "Sunucu hatası" });
+  }
+});
+
+/** ---------- ADMIN: RADIUS accounting (eğer radacct varsa) ---------- **/
+app.get("/admin/accounting", requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+
+    const { rows } = await pool.query(
+      `SELECT
+         r.username AS phone,
+         w.first_name,
+         w.last_name,
+         r.callingstationid AS mac,
+         r.framedipaddress AS ip,
+         r.acctstarttime AS start_time,
+         r.acctstoptime AS stop_time,
+         r.acctinputoctets AS bytes_in,
+         r.acctoutputoctets AS bytes_out,
+         r.acctsessiontime AS session_seconds
+       FROM radacct r
+       LEFT JOIN wifi_users w ON w.phone = r.username
+       ORDER BY r.acctstarttime DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.json({ ok: true, accounting: rows });
+  } catch (err) {
+    if (err.message?.includes("does not exist")) {
+      return res.json({ ok: true, accounting: [], note: "radacct tablosu bulunamadı - FreeRADIUS accounting ayarlarını kontrol edin" });
+    }
+    console.error("admin/accounting error:", err?.message || err);
+    return res.status(500).json({ ok: false, error: "Sunucu hatası" });
+  }
+});
+
 /** ---------- START ---------- **/
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`OTP API listening on port ${PORT}`);
+initDb().then(() => {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`OTP API listening on port ${PORT}`);
+  });
 });

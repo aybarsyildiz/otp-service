@@ -19,65 +19,104 @@
         </div>
       </div>
 
-      <div class="wifi-steps">
-        <div class="wifi-step active" id="step-indicator-phone">
-          <span class="step-badge">1</span>
-          <span>Telefonunu yaz</span>
-        </div>
-        <div class="wifi-step" id="step-indicator-otp">
-          <span class="step-badge">2</span>
-          <span>Kodu gir, bağlan</span>
+      <!-- Auto-login kontrol ekranı -->
+      <div id="step-loading" class="wifi-content">
+        <div class="wifi-auto-login-msg">
+          <div class="wifi-spinner"></div>
+          <p>Bağlantı kontrol ediliyor...</p>
         </div>
       </div>
 
-      <div class="wifi-content">
-        <!-- Step 1: Phone -->
-        <div id="step-phone">
-          <label class="wifi-label" for="phone">Telefon numarası</label>
-          <div class="wifi-input-row">
-            <span class="wifi-prefix">+90</span>
-            <input
-              id="phone"
-              type="tel"
-              inputmode="numeric"
-              autocomplete="tel"
-              placeholder="5xx xxx xx xx"
-              class="wifi-input"
-            />
+      <!-- Normal akış -->
+      <div id="main-flow" class="hidden">
+        <div class="wifi-steps">
+          <div class="wifi-step active" id="step-indicator-phone">
+            <span class="step-badge">1</span>
+            <span>Bilgilerini gir</span>
           </div>
-          <p class="wifi-helper">
-            Sadece SMS doğrulama için kullanıyoruz. Reklam/Spam göndermiyoruz.
-          </p>
-          <button id="send-otp-btn" class="wifi-btn primary">
-            SMS ile kod gönder
-          </button>
-          <div id="msg-phone" class="wifi-message error"></div>
+          <div class="wifi-step" id="step-indicator-otp">
+            <span class="step-badge">2</span>
+            <span>Kodu gir, bağlan</span>
+          </div>
         </div>
 
-        <!-- Step 2: OTP -->
-        <div id="step-otp" class="hidden">
-          <label class="wifi-label" for="otp">SMS ile gelen kod</label>
-          <input
-            id="otp"
-            type="text"
-            inputmode="numeric"
-            maxlength="6"
-            placeholder="6 haneli kod"
-            class="wifi-input"
-          />
-          <p class="wifi-helper">
-            Kod gelmediyse numaranı kontrol et veya 1 dakika sonra tekrar dene.
-          </p>
-          <button id="verify-otp-btn" class="wifi-btn primary">
-            Giriş yap
-          </button>
-          <button id="back-btn" class="wifi-btn ghost" type="button">
-            Numaramı düzelt
-          </button>
-          <div id="msg-otp" class="wifi-message error"></div>
-        </div>
+        <div class="wifi-content">
+          <!-- Step 1: Name + Phone -->
+          <div id="step-phone">
+            <div class="wifi-name-row">
+              <div class="wifi-name-field">
+                <label class="wifi-label" for="firstName">Ad</label>
+                <input
+                  id="firstName"
+                  type="text"
+                  autocomplete="given-name"
+                  placeholder="Adınız"
+                  class="wifi-input wifi-input-bordered"
+                />
+              </div>
+              <div class="wifi-name-field">
+                <label class="wifi-label" for="lastName">Soyad</label>
+                <input
+                  id="lastName"
+                  type="text"
+                  autocomplete="family-name"
+                  placeholder="Soyadınız"
+                  class="wifi-input wifi-input-bordered"
+                />
+              </div>
+            </div>
 
-        <div id="msg-success" class="wifi-message success"></div>
+            <label class="wifi-label" for="phone">Telefon numarası</label>
+            <div class="wifi-input-row">
+              <span class="wifi-prefix">+90</span>
+              <input
+                id="phone"
+                type="tel"
+                inputmode="numeric"
+                autocomplete="tel"
+                placeholder="5xx xxx xx xx"
+                class="wifi-input"
+              />
+            </div>
+
+            <label class="wifi-checkbox-row">
+              <input type="checkbox" id="kvkk" />
+              <span class="wifi-checkbox-text">
+                <a href="#" id="kvkk-link">KVKK Aydınlatma Metni</a>'ni okudum, kabul ediyorum.
+              </span>
+            </label>
+
+            <button id="send-otp-btn" class="wifi-btn primary">
+              SMS ile kod gönder
+            </button>
+            <div id="msg-phone" class="wifi-message error"></div>
+          </div>
+
+          <!-- Step 2: OTP -->
+          <div id="step-otp" class="hidden">
+            <label class="wifi-label" for="otp">SMS ile gelen kod</label>
+            <input
+              id="otp"
+              type="text"
+              inputmode="numeric"
+              maxlength="6"
+              placeholder="6 haneli kod"
+              class="wifi-input wifi-input-bordered"
+            />
+            <p class="wifi-helper">
+              Kod gelmediyse numaranı kontrol et veya 1 dakika sonra tekrar dene.
+            </p>
+            <button id="verify-otp-btn" class="wifi-btn primary">
+              Giriş yap
+            </button>
+            <button id="back-btn" class="wifi-btn ghost" type="button">
+              Numaramı düzelt
+            </button>
+            <div id="msg-otp" class="wifi-message error"></div>
+          </div>
+
+          <div id="msg-success" class="wifi-message success"></div>
+        </div>
       </div>
 
       <div class="wifi-footer">
@@ -104,26 +143,35 @@
   </div>
 
   <script>
-    const OTP_API_BASE = "http://52.57.199.152:3000";
+    var OTP_API_BASE = "http://52.57.199.152:3000";
 
-    const phoneInput = document.getElementById("phone");
-    const sendOtpBtn = document.getElementById("send-otp-btn");
-    const msgPhone = document.getElementById("msg-phone");
+    var RAW_MAC = "$(mac)";
+    var RAW_IP = "$(ip)";
+    var MAC_REGEX = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/;
+    var IP_REGEX = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+    var DEVICE_MAC = MAC_REGEX.test(RAW_MAC) ? RAW_MAC : null;
+    var DEVICE_IP = IP_REGEX.test(RAW_IP) ? RAW_IP : null;
 
-    const stepPhone = document.getElementById("step-phone");
-    const stepOtp = document.getElementById("step-otp");
-    const otpInput = document.getElementById("otp");
-    const verifyOtpBtn = document.getElementById("verify-otp-btn");
-    const backBtn = document.getElementById("back-btn");
-    const msgOtp = document.getElementById("msg-otp");
-    const msgSuccess = document.getElementById("msg-success");
-
-    const stepIndicatorPhone = document.getElementById("step-indicator-phone");
-    const stepIndicatorOtp = document.getElementById("step-indicator-otp");
-
-    const mtForm = document.getElementById("mikrotik-login-form");
-    const mtUser = document.getElementById("mt-username");
-    const mtPass = document.getElementById("mt-password");
+    var stepLoading = document.getElementById("step-loading");
+    var mainFlow = document.getElementById("main-flow");
+    var firstNameInput = document.getElementById("firstName");
+    var lastNameInput = document.getElementById("lastName");
+    var phoneInput = document.getElementById("phone");
+    var kvkkCheckbox = document.getElementById("kvkk");
+    var sendOtpBtn = document.getElementById("send-otp-btn");
+    var msgPhone = document.getElementById("msg-phone");
+    var stepPhone = document.getElementById("step-phone");
+    var stepOtp = document.getElementById("step-otp");
+    var otpInput = document.getElementById("otp");
+    var verifyOtpBtn = document.getElementById("verify-otp-btn");
+    var backBtn = document.getElementById("back-btn");
+    var msgOtp = document.getElementById("msg-otp");
+    var msgSuccess = document.getElementById("msg-success");
+    var stepIndicatorPhone = document.getElementById("step-indicator-phone");
+    var stepIndicatorOtp = document.getElementById("step-indicator-otp");
+    var mtForm = document.getElementById("mikrotik-login-form");
+    var mtUser = document.getElementById("mt-username");
+    var mtPass = document.getElementById("mt-password");
 
     function setStep(step) {
       if (step === "phone") {
@@ -141,22 +189,90 @@
       }
     }
 
+    function showMainFlow() {
+      stepLoading.classList.add("hidden");
+      mainFlow.classList.remove("hidden");
+    }
+
+    function submitMikrotik(username, password) {
+      mtUser.value = username;
+      mtPass.value = password;
+      mtForm.submit();
+    }
+
+    // Auto-login: sessionStorage ile döngüyü engelle (sayfa yeniden yüklenirse tekrar deneme)
+    var AUTO_KEY = "olives_auto_tried";
+
+    (async function checkMacAuth() {
+      // MAC yoksa veya daha önce auto-login denenmişse normal formu göster
+      if (!DEVICE_MAC || sessionStorage.getItem(AUTO_KEY)) {
+        showMainFlow();
+        return;
+      }
+
+      try {
+        var res = await fetch(OTP_API_BASE + "/otp/check-mac", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mac: DEVICE_MAC }),
+        });
+
+        var data = await res.json();
+        if (data.ok && data.username && data.password) {
+          var name = [data.firstName, data.lastName].filter(Boolean).join(" ");
+          stepLoading.innerHTML =
+            '<div class="wifi-auto-login-msg">' +
+              '<div class="wifi-spinner"></div>' +
+              '<p>Hoş geldin' + (name ? ' <strong>' + name + '</strong>' : '') + '!</p>' +
+              '<p class="wifi-helper">Otomatik bağlanılıyor...</p>' +
+            '</div>';
+
+          // Döngüyü engelle: bir kez dene, başarısız olursa normal formu göster
+          sessionStorage.setItem(AUTO_KEY, "1");
+          setTimeout(function () { submitMikrotik(data.username, data.password); }, 500);
+          return;
+        }
+      } catch (e) {
+        console.error("MAC check failed:", e);
+      }
+
+      showMainFlow();
+    })();
+
     sendOtpBtn.onclick = async function () {
       msgPhone.textContent = "";
       msgOtp.textContent = "";
       msgSuccess.textContent = "";
 
-      let phone = phoneInput.value.trim();
-      if (!phone) {
-        msgPhone.textContent = "Telefon numarası gir.";
+      var fn = firstNameInput.value.trim();
+      var ln = lastNameInput.value.trim();
+
+      if (!fn || fn.length < 2) {
+        msgPhone.textContent = "Adınızı girin (en az 2 karakter).";
+        firstNameInput.focus();
+        return;
+      }
+      if (!ln || ln.length < 2) {
+        msgPhone.textContent = "Soyadınızı girin (en az 2 karakter).";
+        lastNameInput.focus();
         return;
       }
 
-      // sadece rakamları al
+      var phone = phoneInput.value.trim();
+      if (!phone) {
+        msgPhone.textContent = "Telefon numarası gir.";
+        phoneInput.focus();
+        return;
+      }
       phone = phone.replace(/\D/g, "");
-
       if (!phone || phone.length < 10) {
         msgPhone.textContent = "Lütfen geçerli bir telefon numarası gir.";
+        phoneInput.focus();
+        return;
+      }
+
+      if (!kvkkCheckbox.checked) {
+        msgPhone.textContent = "KVKK Aydınlatma Metni'ni onaylamanız gerekiyor.";
         return;
       }
 
@@ -165,17 +281,20 @@
         sendOtpBtn.classList.add("loading");
         sendOtpBtn.textContent = "Gönderiliyor...";
 
-        const res = await fetch(OTP_API_BASE + "/otp/request", {
+        var res = await fetch(OTP_API_BASE + "/otp/request", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             phone: phone,
-            mac: "$(mac)",
-            ip: "$(ip)",
+            firstName: fn,
+            lastName: ln,
+            kvkkAccepted: true,
+            mac: DEVICE_MAC,
+            ip: DEVICE_IP,
           }),
         });
 
-        const data = await res.json();
+        var data = await res.json();
         if (!data.ok) {
           msgPhone.textContent = data.error || "Kod gönderilemedi.";
           return;
@@ -198,15 +317,14 @@
       msgOtp.textContent = "";
       msgSuccess.textContent = "";
 
-      const phoneRaw = phoneInput.value.trim();
-      let phone = phoneRaw.replace(/\D/g, "");
-      const code = otpInput.value.trim();
+      var phoneRaw = phoneInput.value.trim();
+      var phone = phoneRaw.replace(/\D/g, "");
+      var code = otpInput.value.trim();
 
       if (!code) {
         msgOtp.textContent = "Kodu gir.";
         return;
       }
-
       if (code.length < 4) {
         msgOtp.textContent = "Kod en az 4 haneli olmalı.";
         return;
@@ -217,23 +335,25 @@
         verifyOtpBtn.classList.add("loading");
         verifyOtpBtn.textContent = "Kontrol ediliyor...";
 
-        const res = await fetch(OTP_API_BASE + "/otp/verify", {
+        var res = await fetch(OTP_API_BASE + "/otp/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phone, code }),
+          body: JSON.stringify({
+            phone: phone,
+            code: code,
+            mac: DEVICE_MAC,
+            ip: DEVICE_IP,
+          }),
         });
 
-        const data = await res.json();
+        var data = await res.json();
         if (!data.ok) {
           msgOtp.textContent = data.error || "Kod hatalı veya süresi dolmuş.";
           return;
         }
 
-        mtUser.value = data.username;
-        mtPass.value = data.password;
-
         msgSuccess.textContent = "Giriş yapılıyor, lütfen bekle...";
-        mtForm.submit();
+        submitMikrotik(data.username, data.password);
       } catch (e) {
         console.error(e);
         msgOtp.textContent = "Sunucuya ulaşılamadı. Birazdan tekrar dene.";

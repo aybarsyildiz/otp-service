@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Olives Coffee Wi-Fi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="3;url=https://olivescoffee.net" />
+  <style>
+    :root {
+      --bg: #121212;
+      --accent: #c7944a;
+      --accent-strong: #f3c877;
+      --text-main: #f5f5f5;
+      --text-muted: #aaaaaa;
+      --success: #39d98a;
+      --border-subtle: #2a2a2a;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #2a1f15 0, #0b0b0b 55%);
+      color: var(--text-main);
+    }
+    .page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: linear-gradient(135deg, #1b1815, #191919);
+      border-radius: 18px;
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 14px 30px rgba(0,0,0,0.45);
+      padding: 32px 24px;
+      text-align: center;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 20%, var(--accent-strong), var(--accent));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #1a1208;
+      font-weight: 700;
+      font-size: 14px;
+      box-shadow: 0 9px 18px rgba(0,0,0,0.6);
+    }
+    .brand h1 { font-size: 18px; margin: 0; }
+    .check-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: rgba(57,217,138,0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+    }
+    .check-icon svg {
+      width: 32px;
+      height: 32px;
+      stroke: var(--success);
+      fill: none;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    h2 {
+      font-size: 20px;
+      margin: 0 0 6px;
+      color: var(--success);
+    }
+    .sub {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .redirect {
+      margin-top: 20px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    a {
+      color: var(--accent-strong);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    a:hover { text-decoration: underline; }
+    @keyframes check-draw {
+      to { stroke-dashoffset: 0; }
+    }
+    .check-icon svg path {
+      stroke-dasharray: 30;
+      stroke-dashoffset: 30;
+      animation: check-draw 0.5s ease 0.2s forwards;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <div class="brand">
+        <div class="logo"><span>OC</span></div>
+        <h1>Olives Coffee</h1>
+      </div>
+      <div class="check-icon">
+        <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+      </div>
+      <h2>Bağlantı Başarılı!</h2>
+      <p class="sub">Olives Coffee Wi-Fi'a hoş geldiniz.</p>
+      <p class="redirect">
+        Yönlendiriliyorsunuz... veya <a href="https://olivescoffee.net">buraya tıklayın</a>
+      </p>
+    </div>
+  </div>
+  <script>
+    setTimeout(function() {
+      window.location.href = "https://olivescoffee.net";
+    }, 3000);
+  </script>
+</body>
+</html>
