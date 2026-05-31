@@ -143,14 +143,23 @@
   </div>
 
   <script>
+    // OTP API — use DNS when available; fallback to Elastic IP
     var OTP_API_BASE = "http://52.57.199.152:3000";
 
     var RAW_MAC = "$(mac)";
     var RAW_IP = "$(ip)";
+    var RAW_DST = "$(link-orig)";
+    var RAW_ERROR = "$(error)";
     var MAC_REGEX = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/;
     var IP_REGEX = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
-    var DEVICE_MAC = MAC_REGEX.test(RAW_MAC) ? RAW_MAC : null;
+    var DEVICE_MAC = MAC_REGEX.test(RAW_MAC) ? RAW_MAC.toUpperCase() : null;
     var DEVICE_IP = IP_REGEX.test(RAW_IP) ? RAW_IP : null;
+    var REQUESTED_URL = RAW_DST && RAW_DST.indexOf("$(") === -1 ? RAW_DST : null;
+    var LOGIN_ERROR = RAW_ERROR && RAW_ERROR.indexOf("$(") === -1 ? RAW_ERROR : null;
+
+    var PROFILE_KEY = "olives_wifi_profile";
+    var AUTO_KEY = "olives_auto_tried";
+    var AUTO_COOLDOWN_MS = 30000;
 
     var stepLoading = document.getElementById("step-loading");
     var mainFlow = document.getElementById("main-flow");
@@ -200,12 +209,50 @@
       mtForm.submit();
     }
 
-    // Auto-login: sessionStorage ile döngüyü engelle (sayfa yeniden yüklenirse tekrar deneme)
-    var AUTO_KEY = "olives_auto_tried";
+    function saveProfile(fn, ln, phone) {
+      try {
+        localStorage.setItem(PROFILE_KEY, JSON.stringify({
+          firstName: fn,
+          lastName: ln,
+          phone: phone,
+          savedAt: Date.now()
+        }));
+      } catch (e) {}
+    }
+
+    function loadProfile() {
+      try {
+        var raw = localStorage.getItem(PROFILE_KEY);
+        if (!raw) return;
+        var p = JSON.parse(raw);
+        if (p.firstName) firstNameInput.value = p.firstName;
+        if (p.lastName) lastNameInput.value = p.lastName;
+        if (p.phone) phoneInput.value = p.phone.replace(/^90/, "");
+        if (p.savedAt && Date.now() - p.savedAt > 90 * 86400000) {
+          localStorage.removeItem(PROFILE_KEY);
+        }
+      } catch (e) {}
+    }
+
+    function shouldTryAutoLogin() {
+      if (!DEVICE_MAC) return false;
+      var last = sessionStorage.getItem(AUTO_KEY);
+      if (!last) return true;
+      return Date.now() - Number(last) > AUTO_COOLDOWN_MS;
+    }
+
+    function markAutoLoginAttempt() {
+      sessionStorage.setItem(AUTO_KEY, String(Date.now()));
+    }
+
+    loadProfile();
+
+    if (LOGIN_ERROR) {
+      msgPhone.textContent = "Bağlantı kurulamadı. Lütfen tekrar deneyin veya SMS ile giriş yapın.";
+    }
 
     (async function checkMacAuth() {
-      // MAC yoksa veya daha önce auto-login denenmişse normal formu göster
-      if (!DEVICE_MAC || sessionStorage.getItem(AUTO_KEY)) {
+      if (!shouldTryAutoLogin()) {
         showMainFlow();
         return;
       }
@@ -214,7 +261,11 @@
         var res = await fetch(OTP_API_BASE + "/otp/check-mac", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mac: DEVICE_MAC }),
+          body: JSON.stringify({
+            mac: DEVICE_MAC,
+            ip: DEVICE_IP,
+            requestedUrl: REQUESTED_URL
+          }),
         });
 
         var data = await res.json();
@@ -227,8 +278,7 @@
               '<p class="wifi-helper">Otomatik bağlanılıyor...</p>' +
             '</div>';
 
-          // Döngüyü engelle: bir kez dene, başarısız olursa normal formu göster
-          sessionStorage.setItem(AUTO_KEY, "1");
+          markAutoLoginAttempt();
           setTimeout(function () { submitMikrotik(data.username, data.password); }, 500);
           return;
         }
@@ -300,6 +350,7 @@
           return;
         }
 
+        saveProfile(fn, ln, phone);
         setStep("otp");
         msgSuccess.textContent = "Kod gönderildi. SMS'i kontrol et.";
         otpInput.focus();
@@ -343,6 +394,7 @@
             code: code,
             mac: DEVICE_MAC,
             ip: DEVICE_IP,
+            requestedUrl: REQUESTED_URL,
           }),
         });
 
@@ -352,6 +404,11 @@
           return;
         }
 
+        saveProfile(
+          firstNameInput.value.trim(),
+          lastNameInput.value.trim(),
+          phone
+        );
         msgSuccess.textContent = "Giriş yapılıyor, lütfen bekle...";
         submitMikrotik(data.username, data.password);
       } catch (e) {

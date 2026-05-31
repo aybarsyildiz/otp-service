@@ -92,9 +92,11 @@ echo ">>> Adding MikroTik client (clients.conf)..."
 sudo bash -c 'cat >> /etc/freeradius/3.0/clients.conf' << 'EOF'
 
 client mikrotik-hotspot {
-    ipaddr = 1.2.3.4
+    ipaddr = 212.125.28.0/24
     secret = SuperSecretSharedKey
     nas_type = other
+    require_message_authenticator = no
+    limit_proxy_state = no
 }
 EOF
 
@@ -217,7 +219,7 @@ sudo systemctl enable wifi-otp
 sudo systemctl start wifi-otp
 
 echo ">>> DONE."
-echo "1) /etc/freeradius/3.0/clients.conf içindeki 1.2.3.4 yerine MikroTik'in WAN IP'sini yaz."
-echo "2) secret = SuperSecretSharedKey kısmını hem burada hem Mikrotik Radius ayarında aynı yap."
-echo "3) /opt/wifi-otp/index.js içindeki TODO kısmına NetGSM veya AWS SNS SMS kodunu ekle."
+echo "1) /etc/freeradius/3.0/clients.conf içinde Mikrotik WAN subnet'ini (ör. 212.125.28.0/24) tanımla — tek IP değil, tüm /24 bloğu."
+echo "2) secret değerini hem burada hem Mikrotik Radius ayarında aynı yap."
+echo "3) Mikrotik hotspot HTML dosyalarını (login.html, alogin.html) router'a yükle."
 
